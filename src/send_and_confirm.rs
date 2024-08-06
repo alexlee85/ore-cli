@@ -1,20 +1,24 @@
-use std::time::Duration;
+use std::{str::FromStr, time::Duration};
 
 use colored::*;
+use serde_json::json;
 use solana_client::{
     client_error::{ClientError, ClientErrorKind, Result as ClientResult},
     rpc_config::RpcSendTransactionConfig,
 };
 use solana_program::{
     instruction::Instruction,
+    message::{v0::Message, VersionedMessage},
     native_token::{lamports_to_sol, sol_to_lamports},
+    system_instruction,
 };
-use solana_rpc_client::spinner;
+use solana_rpc_client::{rpc_client::SerializableTransaction, spinner};
 use solana_sdk::{
     commitment_config::CommitmentLevel,
     compute_budget::ComputeBudgetInstruction,
+    pubkey::Pubkey,
     signature::{Signature, Signer},
-    transaction::Transaction,
+    transaction::{Transaction, VersionedTransaction},
 };
 use solana_transaction_status::{TransactionConfirmationStatus, UiTransactionEncoding};
 
@@ -24,10 +28,10 @@ const MIN_SOL_BALANCE: f64 = 0.005;
 
 const RPC_RETRIES: usize = 0;
 const _SIMULATION_RETRIES: usize = 4;
-const GATEWAY_RETRIES: usize = 150;
+const GATEWAY_RETRIES: usize = 20;
 const CONFIRM_RETRIES: usize = 1;
 
-const CONFIRM_DELAY: u64 = 0;
+const CONFIRM_DELAY: u64 = 5000;
 const GATEWAY_DELAY: u64 = 300;
 
 pub enum ComputeBudget {
@@ -106,19 +110,72 @@ impl Miner {
             tx.sign(&[&signer, &fee_payer], hash);
         }
 
+        let txid = tx.get_signature();
+        let tx_bytes = bincode::serialize(&tx).map_err(|err| ClientError {
+            request: None,
+            kind: ClientErrorKind::Custom(err.to_string()),
+        })?;
+        let tx_bs58 = bs58::encode(tx_bytes).into_string();
+        let tip_account = Pubkey::from_str("DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL")
+            .map_err(|err| ClientError {
+                request: None,
+                kind: ClientErrorKind::Custom(err.to_string()),
+            })?;
+        let tip_instr = system_instruction::transfer(&signer.pubkey(), &tip_account, 39000);
+        let recent_blockhash = client
+            .get_latest_blockhash()
+            .await
+            .map_err(|err| ClientError {
+                request: None,
+                kind: ClientErrorKind::Custom(err.to_string()),
+            })?;
+        let msg1 = Message::try_compile(&signer.pubkey(), &[tip_instr], &[], recent_blockhash)
+            .map_err(|err| ClientError {
+                request: None,
+                kind: ClientErrorKind::Custom(err.to_string()),
+            })?;
+        let msg1 = VersionedMessage::V0(msg1);
+        let tx1 = VersionedTransaction::try_new(msg1, &[&signer]).map_err(|err| ClientError {
+            request: None,
+            kind: ClientErrorKind::Custom(err.to_string()),
+        })?;
+        let tx1_base58 = bs58::encode(bincode::serialize(&tx1).map_err(|err| ClientError {
+            request: None,
+            kind: ClientErrorKind::Custom(err.to_string()),
+        })?)
+        .into_string();
+
         // Submit tx
         let mut attempts = 0;
+        let http_client = reqwest::ClientBuilder::default().build()?;
         loop {
+            progress_bar.set_message(format!("Submitting transaction... (attempt {})", attempts));
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "sendBundle",
+                "params": [[
+                    tx1_base58,
+                    tx_bs58
+                ]]
+            });
 
-            let message = match &self.dynamic_fee_url {
-                Some(_) => format!("Submitting transaction... (attempt {} with dynamic priority fee of {} via {})", attempts, priority_fee, self.dynamic_fee_strategy.as_ref().unwrap()),
-                None => format!("Submitting transaction... (attempt {} with static priority fee of {})", attempts, priority_fee),
-            };
+            let resp = http_client
+                .post(format!(
+                    "https://amsterdam.mainnet.block-engine.jito.wtf/api/v1/bundles"
+                ))
+                .header("Content-Type", "application/json")
+                .body(body.to_string())
+                .send()
+                .await?;
 
-            progress_bar.set_message(message);
+            let resp_body = resp.json::<serde_json::Value>().await;
+            println!("send bundle resp: {resp_body:?}");
 
-            match client.send_transaction_with_config(&tx, send_cfg).await {
-                Ok(sig) => {
+            // match client.send_transaction_with_config(&tx, send_cfg).await {
+            match resp_body {
+                Ok(_) => {
+                    let sig = *txid;
                     // Skip confirmation
                     if skip_confirm {
                         progress_bar.finish_with_message(format!("Sent: {}", sig));
@@ -178,7 +235,7 @@ impl Miner {
                     progress_bar.set_message(format!(
                         "{}: {}",
                         "ERROR".bold().red(),
-                        err.kind().to_string()
+                        err.to_string()
                     ));
                 }
             }
