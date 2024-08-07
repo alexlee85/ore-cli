@@ -82,6 +82,13 @@ impl Miner {
         final_ixs.push(ComputeBudgetInstruction::set_compute_unit_price(
             priority_fee,
         ));
+        let tip_account = Pubkey::from_str("DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL")
+            .map_err(|err| ClientError {
+                request: None,
+                kind: ClientErrorKind::Custom(err.to_string()),
+            })?;
+        let tip_instr = system_instruction::transfer(&signer.pubkey(), &tip_account, self.jito_tip);
+        final_ixs.push(tip_instr);
         final_ixs.extend_from_slice(ixs);
 
         // Build tx
@@ -92,13 +99,6 @@ impl Miner {
             max_retries: Some(RPC_RETRIES),
             min_context_slot: None,
         };
-        let tip_account = Pubkey::from_str("DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL")
-            .map_err(|err| ClientError {
-                request: None,
-                kind: ClientErrorKind::Custom(err.to_string()),
-            })?;
-        let tip_instr = system_instruction::transfer(&signer.pubkey(), &tip_account, self.jito_tip);
-        final_ixs.push(tip_instr);
 
         let mut tx = Transaction::new_with_payer(&final_ixs, Some(&fee_payer.pubkey()));
 
