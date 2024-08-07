@@ -8,7 +8,6 @@ use solana_client::{
 };
 use solana_program::{
     instruction::Instruction,
-    message::{v0::Message, VersionedMessage},
     native_token::{lamports_to_sol, sol_to_lamports},
     system_instruction,
 };
@@ -18,7 +17,7 @@ use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
     pubkey::Pubkey,
     signature::{Signature, Signer},
-    transaction::{Transaction, VersionedTransaction},
+    transaction::Transaction,
 };
 use solana_transaction_status::{TransactionConfirmationStatus, UiTransactionEncoding};
 
@@ -93,6 +92,14 @@ impl Miner {
             max_retries: Some(RPC_RETRIES),
             min_context_slot: None,
         };
+        let tip_account = Pubkey::from_str("DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL")
+            .map_err(|err| ClientError {
+                request: None,
+                kind: ClientErrorKind::Custom(err.to_string()),
+            })?;
+        let tip_instr = system_instruction::transfer(&signer.pubkey(), &tip_account, self.jito_tip);
+        final_ixs.push(tip_instr);
+
         let mut tx = Transaction::new_with_payer(&final_ixs, Some(&fee_payer.pubkey()));
 
         // Sign tx
@@ -113,34 +120,6 @@ impl Miner {
             kind: ClientErrorKind::Custom(err.to_string()),
         })?;
         let tx_bs58 = bs58::encode(tx_bytes).into_string();
-        let tip_account = Pubkey::from_str("DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL")
-            .map_err(|err| ClientError {
-                request: None,
-                kind: ClientErrorKind::Custom(err.to_string()),
-            })?;
-        let tip_instr = system_instruction::transfer(&signer.pubkey(), &tip_account, self.jito_tip);
-        let recent_blockhash = client
-            .get_latest_blockhash()
-            .await
-            .map_err(|err| ClientError {
-                request: None,
-                kind: ClientErrorKind::Custom(err.to_string()),
-            })?;
-        let msg1 = Message::try_compile(&signer.pubkey(), &[tip_instr], &[], recent_blockhash)
-            .map_err(|err| ClientError {
-                request: None,
-                kind: ClientErrorKind::Custom(err.to_string()),
-            })?;
-        let msg1 = VersionedMessage::V0(msg1);
-        let tx1 = VersionedTransaction::try_new(msg1, &[&signer]).map_err(|err| ClientError {
-            request: None,
-            kind: ClientErrorKind::Custom(err.to_string()),
-        })?;
-        let tx1_base58 = bs58::encode(bincode::serialize(&tx1).map_err(|err| ClientError {
-            request: None,
-            kind: ClientErrorKind::Custom(err.to_string()),
-        })?)
-        .into_string();
 
         // Submit tx
         let mut attempts = 0;
@@ -152,7 +131,6 @@ impl Miner {
                 "id": 1,
                 "method": "sendBundle",
                 "params": [[
-                    tx1_base58,
                     tx_bs58
                 ]]
             });
