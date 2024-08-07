@@ -24,7 +24,7 @@ use solana_transaction_status::{TransactionConfirmationStatus, UiTransactionEnco
 
 use crate::Miner;
 
-const MIN_SOL_BALANCE: f64 = 0.005;
+const MIN_SOL_BALANCE: f64 = 0.0001;
 
 const RPC_RETRIES: usize = 0;
 const _SIMULATION_RETRIES: usize = 4;
@@ -76,19 +76,17 @@ impl Miner {
         }
 
         let priority_fee = match &self.dynamic_fee_url {
-            Some(_) => {
-                self.dynamic_fee().await
-            }
-            None => {
-                self.priority_fee.unwrap_or(0)
-            }
+            Some(_) => self.dynamic_fee().await,
+            None => self.priority_fee.unwrap_or(0),
         };
 
-        final_ixs.push(ComputeBudgetInstruction::set_compute_unit_price(priority_fee));
+        final_ixs.push(ComputeBudgetInstruction::set_compute_unit_price(
+            priority_fee,
+        ));
         final_ixs.extend_from_slice(ixs);
 
         // Build tx
-        let send_cfg = RpcSendTransactionConfig {
+        let _send_cfg = RpcSendTransactionConfig {
             skip_preflight: true,
             preflight_commitment: Some(CommitmentLevel::Confirmed),
             encoding: Some(UiTransactionEncoding::Base64),
@@ -103,7 +101,6 @@ impl Miner {
             .await
             .unwrap();
 
-        
         if signer.pubkey() == fee_payer.pubkey() {
             tx.sign(&[&signer], hash);
         } else {
@@ -121,7 +118,7 @@ impl Miner {
                 request: None,
                 kind: ClientErrorKind::Custom(err.to_string()),
             })?;
-        let tip_instr = system_instruction::transfer(&signer.pubkey(), &tip_account, 39000);
+        let tip_instr = system_instruction::transfer(&signer.pubkey(), &tip_account, self.jito_tip);
         let recent_blockhash = client
             .get_latest_blockhash()
             .await
