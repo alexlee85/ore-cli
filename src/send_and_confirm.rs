@@ -45,7 +45,6 @@ impl Miner {
         compute_budget: ComputeBudget,
         skip_confirm: bool,
     ) -> ClientResult<Signature> {
-        let progress_bar = spinner::new_progress_bar();
         let signer = self.signer();
         let client = self.rpc_client.clone();
         let fee_payer = self.fee_payer();
@@ -78,6 +77,7 @@ impl Miner {
             Some(_) => self.dynamic_fee().await,
             None => self.priority_fee.unwrap_or(0),
         };
+        println!("  Priority fee: {} microlamports", priority_fee);
 
         final_ixs.push(ComputeBudgetInstruction::set_compute_unit_price(
             priority_fee,
@@ -122,6 +122,7 @@ impl Miner {
         let tx_bs58 = bs58::encode(tx_bytes).into_string();
 
         // Submit tx
+        let progress_bar = spinner::new_progress_bar();
         let mut attempts = 0;
         let http_client = reqwest::ClientBuilder::default().build()?;
         loop {
