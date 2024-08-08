@@ -2581,7 +2581,7 @@ dependencies = [
 
 [[package]]
 name = "ore-cli"
-version = "2.0.1"
+version = "2.0.4"
 dependencies = [
  "anyhow",
  "bincode",
